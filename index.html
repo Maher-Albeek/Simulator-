@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <title>Air 2S Flight Simulator</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <canvas id="view"></canvas>
+
+  <div id="hud" hidden>
+    <div class="top">
+      <button id="btn-menu" title="Menu (Esc)">☰</button>
+      <button id="btn-mode" class="pill" title="Flight mode (1 / 2 / 3)">N</button>
+      <span id="status" class="status">Ready</span>
+      <span class="spacer"></span>
+      <span id="src" class="chip">Keyboard</span>
+      <span class="chip">GPS 18</span>
+      <span id="battery" class="chip">100%</span>
+      <span id="clock" class="chip">00:00</span>
+    </div>
+
+    <div id="banner" class="banner" hidden></div>
+    <div id="mission" class="mission" hidden></div>
+
+    <canvas id="map" class="map" width="320" height="320"></canvas>
+
+    <div class="telemetry">
+      <div><small>D</small><b id="t-d">0</b><small>m</small></div>
+      <div><small>H</small><b id="t-h">0.0</b><small>m</small></div>
+      <div><small>H.S</small><b id="t-hs">0.0</b><small>m/s</small></div>
+      <div><small>V.S</small><b id="t-vs">0.0</b><small>m/s</small></div>
+    </div>
+
+    <div class="gimbal"><div id="gimbal-mark"></div><span id="gimbal-text">0°</span></div>
+
+    <div class="actions">
+      <button id="btn-takeoff" title="Take off / land (T)">Take off</button>
+      <button id="btn-rth" title="Return to home (H)">RTH</button>
+      <button id="btn-view" title="Change view (V)">View</button>
+    </div>
+
+    <canvas id="sticks" class="sticks" width="260" height="120"></canvas>
+    <div id="touch-left" class="touch-stick left"><i></i></div>
+    <div id="touch-right" class="touch-stick right"><i></i></div>
+  </div>
+
+  <div id="menu" class="menu">
+    <div class="panel">
+      <h1>Air 2S Flight Simulator</h1>
+      <p class="sub">Practise flying with your RC-N1 before you take the real drone out.</p>
+
+      <h2>Mission</h2>
+      <div class="cards" id="missions">
+        <button data-mission="free" class="on"><b>Free flight</b><span>Explore the valley, no goals.</span></button>
+        <button data-mission="gates"><b>Gate course</b><span>Fly through 8 gates against the clock.</span></button>
+        <button data-mission="landing"><b>Precision landing</b><span>Land on the blue pad, as close to the centre as you can.</span></button>
+      </div>
+
+      <h2>Conditions</h2>
+      <div class="row">
+        <label>Wind
+          <select id="opt-wind">
+            <option value="0">Calm</option>
+            <option value="4">Breeze (4 m/s)</option>
+            <option value="8">Windy (8 m/s)</option>
+          </select>
+        </label>
+        <label>Battery
+          <select id="opt-battery">
+            <option value="1">Real (31 min)</option>
+            <option value="6">Short (5 min)</option>
+          </select>
+        </label>
+      </div>
+
+      <h2>Controller</h2>
+      <div class="rc">
+        <button id="btn-rc">Connect RC-N1</button>
+        <span id="rc-status">Not connected — keyboard, gamepad and touch still work.</span>
+      </div>
+      <details>
+        <summary>RC-N1 setup and troubleshooting</summary>
+        <ol>
+          <li>Use Chrome or Edge on a computer (Windows, macOS or Linux).</li>
+          <li>Switch the controller on. The drone can stay off.</li>
+          <li>Plug a USB-C data cable into the port on the <b>bottom</b> of the controller, not the phone port on top.</li>
+          <li>Press <b>Connect RC-N1</b> and choose the DJI port. If two are listed, pick the one named “For Protocol”; if no stick data arrives, reconnect with the other.</li>
+        </ol>
+        <p>Sticks moving the wrong way? Flip them here:</p>
+        <div class="row" id="invert">
+          <label><input type="checkbox" data-axis="throttle"> Throttle</label>
+          <label><input type="checkbox" data-axis="yaw"> Yaw</label>
+          <label><input type="checkbox" data-axis="pitch"> Pitch</label>
+          <label><input type="checkbox" data-axis="roll"> Roll</label>
+          <label><input type="checkbox" data-axis="wheel"> Gimbal wheel</label>
+        </div>
+        <p><button id="btn-rc-any" class="link">Port not listed? Show all serial ports</button></p>
+        <p class="mono" id="rc-raw"></p>
+      </details>
+
+      <h2>Controls</h2>
+      <table>
+        <tr><th></th><th>RC-N1 / gamepad</th><th>Keyboard</th></tr>
+        <tr><td>Up / down, turn</td><td>Left stick</td><td>W S / A D</td></tr>
+        <tr><td>Forward / back, sideways</td><td>Right stick</td><td>Arrow keys</td></tr>
+        <tr><td>Camera tilt</td><td>Gimbal wheel / triggers</td><td>Z X</td></tr>
+        <tr><td>Start motors</td><td colspan="2">Both sticks down and inward for 1 s, then push the left stick up</td></tr>
+        <tr><td>Take off / land</td><td>A button</td><td>T</td></tr>
+        <tr><td>Return to home</td><td>B button</td><td>H</td></tr>
+        <tr><td>Cine / Normal / Sport</td><td>X button</td><td>1 2 3</td></tr>
+        <tr><td>Change view</td><td>Y button</td><td>V</td></tr>
+        <tr><td>Reset, mute, menu</td><td></td><td>R, M, Esc</td></tr>
+      </table>
+
+      <button id="btn-start" class="primary">Start flying</button>
+      <p class="fine">Unofficial training tool, not affiliated with DJI. Flight figures follow the published Air 2S specifications; real aircraft behave differently in wind, cold and near obstacles.</p>
+    </div>
+  </div>
+
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>

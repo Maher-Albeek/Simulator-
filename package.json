@@ -1,0 +1,11 @@
+{
+  "name": "air2s-flight-simulator",
+  "version": "1.0.0",
+  "description": "Browser flight simulator for the DJI Air 2S, flown with the RC-N1 controller over USB",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test"
+  }
+}
