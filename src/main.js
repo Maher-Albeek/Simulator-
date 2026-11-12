@@ -4,19 +4,12 @@ import { SimScene } from './scene.js';
 import { Input } from './input.js';
 import { RCN1 } from './rcn1.js';
 import { PropAudio } from './audio.js';
+import { GATE_COURSE, GATE_RADIUS, LANDING_TARGET } from './course.js';
 
 const $ = (id) => document.getElementById(id);
 const DEG = Math.PI / 180;
 
 // ---------- Missions ----------
-
-const GATE_RADIUS = 4;
-// x, z, height above ground
-const GATE_COURSE = [
-  [0, -45, 5], [-45, -95, 9], [-110, -90, 14], [-140, -30, 18],
-  [-110, 40, 12], [-50, 75, 8], [15, 60, 6], [30, 15, 4],
-];
-const LANDING_TARGET = { x: 60, z: 40, radius: 2.5 };
 
 const terrain = new Terrain();
 for (const [x, z] of GATE_COURSE) terrain.clearTrees(x, z, 14);
@@ -370,6 +363,7 @@ function frame(now) {
     while (carry >= STEP) {
       carry -= STEP;
       const prev = { ...drone.pos };
+      terrain.time = game.time;
       drone.update(STEP, v, wind(game.time));
       if (game.running) game.missionTime += STEP;
       checkGates(prev);

@@ -56,6 +56,12 @@ on-screen sticks on a touch screen.
 - Auto take-off, landing, return-to-home, low-battery RTH and forced landing.
 - Gimbal tilt from -90° to +24°, with a 22 mm-equivalent field of view.
 - Crashes: trees, buildings, hard landings and water.
+- A countryside to explore: a lake with a road bridge you can fly under, a
+  village with a church, a farm, a construction site with a tower crane, a
+  high-voltage power line, a guyed radio mast, a wind farm with turning
+  blades, drifting hot-air balloons, and a training yard with slalom poles
+  and arches next to the take-off field. Everything you can see is solid,
+  including the wires.
 - Missions: free flight, an 8-gate timed course, and precision landing.
 
 ## Development
@@ -65,5 +71,5 @@ npm test
 ```
 
 `src/duml.js` (controller protocol), `src/drone.js` (flight model) and
-`src/terrain.js` (world shape) have no browser dependencies and are covered
+`src/terrain.js` (world shape and obstacles) have no browser dependencies and are covered
 by the tests. three.js is vendored in `vendor/` (MIT licence).
