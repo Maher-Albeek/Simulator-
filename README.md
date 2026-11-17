@@ -64,6 +64,20 @@ on-screen sticks on a touch screen.
   including the wires.
 - Missions: free flight, an 8-gate timed course, and precision landing.
 
+## Graphics
+
+Rendering runs through a post-processing pipeline — HDR bloom, ACES tone
+mapping, a gentle colour grade with a soft vignette, and anti-aliasing — on
+top of sky-lit reflections (an environment probe) for the drone and metal
+surfaces, soft sun shadows, atmospheric haze, drifting clouds and rippling
+water. The spinning propellers blur into discs.
+
+A **Graphics** setting in the menu (Low / Medium / High / Ultra) trades detail
+for speed and can be changed at any time, including mid-flight. It controls
+render resolution, shadows, bloom and cloud density but never touches flight
+behaviour. The default is picked from your display; drop to Low if the view
+stutters. The choice is remembered.
+
 ## Development
 
 ```
@@ -72,4 +86,6 @@ npm test
 
 `src/duml.js` (controller protocol), `src/drone.js` (flight model) and
 `src/terrain.js` (world shape and obstacles) have no browser dependencies and are covered
-by the tests. three.js is vendored in `vendor/` (MIT licence).
+by the tests. three.js and its post-processing add-ons are vendored in
+`vendor/` and `vendor/jsm/` (MIT licence) and resolved through the import map
+in `index.html`, so there is still nothing to install.

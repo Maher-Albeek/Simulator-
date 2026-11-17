@@ -73,7 +73,16 @@
             <option value="6">Short (5 min)</option>
           </select>
         </label>
+        <label>Graphics
+          <select id="opt-quality">
+            <option value="low">Low</option>
+            <option value="medium">Medium</option>
+            <option value="high">High</option>
+            <option value="ultra">Ultra</option>
+          </select>
+        </label>
       </div>
+      <p class="fine">Graphics can be changed any time, including mid-flight, with no effect on how the drone handles. Drop to Low if the view stutters.</p>
 
       <h2>Controller</h2>
       <div class="rc">
@@ -119,6 +128,14 @@
     </div>
   </div>
 
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "./vendor/three.module.min.js",
+        "three/addons/": "./vendor/jsm/"
+      }
+    }
+  </script>
   <script type="module" src="src/main.js"></script>
 </body>
 </html>

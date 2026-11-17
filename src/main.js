@@ -26,7 +26,18 @@ const gates = GATE_COURSE.map(([x, z, up], i) => {
 
 // ---------- Core objects ----------
 
-const sim = new SimScene($('view'), terrain);
+// Default graphics preset: a sensible guess from the display, overridden by a
+// saved choice. Changing it never touches flight behaviour.
+const QUALITY_KEY = 'air2s-sim-quality';
+function defaultQuality() {
+  try { const saved = localStorage.getItem(QUALITY_KEY); if (saved) return saved; } catch { /* private mode */ }
+  const dpr = window.devicePixelRatio || 1;
+  const cores = navigator.hardwareConcurrency || 4;
+  if (cores <= 4 && dpr <= 1) return 'medium';
+  return 'high';
+}
+const quality = defaultQuality();
+const sim = new SimScene($('view'), terrain, quality);
 const drone = new Drone(terrain);
 const rc = new RCN1();
 const input = new Input(rc);
@@ -170,6 +181,13 @@ $('btn-start').onclick = () => {
   }
   game.windSpeed = Number($('opt-wind').value);
   setPaused(false);
+};
+
+// Graphics preset: apply immediately (works mid-flight) and remember the choice.
+$('opt-quality').value = quality;
+$('opt-quality').onchange = (e) => {
+  sim.applyQuality(e.target.value);
+  try { localStorage.setItem(QUALITY_KEY, e.target.value); } catch { /* private mode */ }
 };
 
 input.bindTouchStick($('touch-left'), ['yaw', 'throttle']);

@@ -1,7 +1,16 @@
 // Everything that is drawn: sky, terrain, water, vegetation, the structures
 // listed by terrain.js, the drone model, race gates and the camera views.
+// Rendering goes through a post-processing chain (bloom, ACES tone mapping,
+// a gentle colour grade and anti-aliasing) whose cost is set by the quality
+// preset; none of this touches the flight model or controls.
 
-import * as THREE from '../vendor/three.module.min.js';
+import * as THREE from 'three';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js';
 import {
   TERRAIN_SIZE, WATER_LEVEL, ROAD_HALF_WIDTH, TURBINE_FRONT, fbm, turbineAngle, balloonPosition,
 } from './terrain.js';
@@ -10,6 +19,42 @@ const SUN_DIR = new THREE.Vector3(0.45, 0.62, 0.35).normalize();
 const GIMBAL_FOV = 51;   // 22 mm equivalent lens on a 16:9 frame
 const HORIZON = 0xc9dff0;
 const ZENITH = 0x2f6fc4;
+
+// Visual presets. pixelRatio is capped to the display's own ratio so "Ultra"
+// never upscales past what the screen can show. Everything here only changes
+// how the scene looks or how expensive it is to draw.
+export const QUALITY = {
+  low: { label: 'Low', pixelRatio: 1, shadows: false, shadowMap: 0, treeShadows: false, post: false, bloom: 0, anisotropy: 2, clouds: 22 },
+  medium: { label: 'Medium', pixelRatio: 1, shadows: true, shadowMap: 1024, treeShadows: false, post: true, bloom: 0.45, anisotropy: 4, clouds: 34 },
+  high: { label: 'High', pixelRatio: 1.5, shadows: true, shadowMap: 2048, treeShadows: true, post: true, bloom: 0.6, anisotropy: 8, clouds: 46 },
+  ultra: { label: 'Ultra', pixelRatio: 2, shadows: true, shadowMap: 4096, treeShadows: true, post: true, bloom: 0.7, anisotropy: 16, clouds: 46 },
+};
+
+// Final-image grade: a touch of contrast and saturation, and a soft vignette.
+// Runs after tone mapping, in display colour, so the numbers are intuitive.
+const GradeShader = {
+  uniforms: {
+    tDiffuse: { value: null },
+    contrast: { value: 1.055 },
+    saturation: { value: 1.12 },
+    vignette: { value: 0.32 },
+  },
+  vertexShader: `
+    varying vec2 vUv;
+    void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+  fragmentShader: `
+    uniform sampler2D tDiffuse; uniform float contrast; uniform float saturation; uniform float vignette;
+    varying vec2 vUv;
+    void main() {
+      vec3 c = texture2D(tDiffuse, vUv).rgb;
+      c = (c - 0.5) * contrast + 0.5;
+      float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
+      c = clamp(mix(vec3(l), c, saturation), 0.0, 1.0);
+      float d = length(vUv - 0.5);
+      c *= mix(1.0, smoothstep(0.85, 0.32, d), vignette);
+      gl_FragColor = vec4(c, 1.0);
+    }`,
+};
 
 function canvasTexture(width, height, draw, repeat) {
   const cv = document.createElement('canvas');
@@ -91,24 +136,28 @@ function lumpGeometry(detail, amount, seed) {
 }
 
 export class SimScene {
-  constructor(canvas, terrain) {
+  constructor(canvas, terrain, quality = 'high') {
     this.terrain = terrain;
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    this.renderer.shadowMap.enabled = true;
+    this.settings = QUALITY[quality] || QUALITY.high;
+    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.autoUpdate = true;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 1.05;
+    this.maxAnisotropy = this.renderer.capabilities.getMaxAnisotropy();
 
     this.scene = new THREE.Scene();
-    this.scene.fog = new THREE.Fog(HORIZON, 280, 1350);
+    this.scene.fog = new THREE.Fog(HORIZON, 300, 1500);
     this.camera = new THREE.PerspectiveCamera(GIMBAL_FOV, 1, 0.05, 4000);
     this.camera.rotation.order = 'YXZ';
     this.view = 'gimbal';
+    this.chaseFov = 65;
     this.gates = [];
     this.materials = new Map();
 
     this.#lights();
     this.#sky();
+    this.#environment();
     this.#clouds();
     this.#ground();
     this.#water();
@@ -120,13 +169,82 @@ export class SimScene {
     this.#homePad();
     this.droneModel = this.#drone();
     this.rebuildTrees();
+
+    this.#buildComposer();
+    this.applyQuality(quality);
     this.resize();
+  }
+
+  // Sky-lit reflections for the metal parts of the drone and the structures.
+  // A one-off cube render of the sky dome, turned into a PMREM probe.
+  #environment() {
+    const pmrem = new THREE.PMREMGenerator(this.renderer);
+    pmrem.compileCubemapShader();
+    const envScene = new THREE.Scene();
+    envScene.add(new THREE.Mesh(this.sky.geometry, this.sky.material));
+    this.scene.environment = pmrem.fromScene(envScene, 0.04).texture;
+    this.scene.environmentIntensity = 0.65;
+    pmrem.dispose();
+  }
+
+  #buildComposer() {
+    this.composer?.dispose();
+    const composer = new EffectComposer(this.renderer);
+    composer.addPass(new RenderPass(this.scene, this.camera));
+    const bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), this.settings.bloom, 0.5, 0.82);
+    composer.addPass(bloom);
+    composer.addPass(new OutputPass());
+    const grade = new ShaderPass(GradeShader);
+    composer.addPass(grade);
+    const smaa = new SMAAPass();
+    composer.addPass(smaa);
+    this.composer = composer;
+    this.bloomPass = bloom;
+  }
+
+  // Switch visual quality at any time. Only looks and cost change.
+  applyQuality(name) {
+    const s = QUALITY[name] || this.settings;
+    this.settings = s;
+    const pr = Math.min(s.pixelRatio, Math.max(1, window.devicePixelRatio || 1));
+    this.renderer.setPixelRatio(pr);
+
+    if (this.renderer.shadowMap.enabled !== s.shadows) {
+      this.renderer.shadowMap.enabled = s.shadows;
+      this.scene.traverse((o) => { if (o.material) this.#flagRecompile(o.material); });
+    }
+    if (s.shadows) {
+      this.sun.shadow.mapSize.setScalar(s.shadowMap);
+      this.sun.shadow.map?.dispose();
+      this.sun.shadow.map = null;
+    }
+    for (const m of this.treeMeshes || []) m.castShadow = s.treeShadows;
+
+    if (this.bloomPass) this.bloomPass.strength = s.bloom;
+    for (const c of this.clouds || []) c.visible = c.userData.rank < s.clouds;
+    this.#setAnisotropy(Math.min(s.anisotropy, this.maxAnisotropy));
+    this.resize();
+  }
+
+  #flagRecompile(material) {
+    for (const m of Array.isArray(material) ? material : [material]) m.needsUpdate = true;
+  }
+
+  #setAnisotropy(a) {
+    for (const key of Object.keys(this.textures || {})) {
+      const t = this.textures[key];
+      for (const tex of Array.isArray(t) ? t : [t]) if (tex?.isTexture) tex.anisotropy = a;
+    }
+    if (this.groundDetail) this.groundDetail.anisotropy = a;
   }
 
   resize() {
     const w = window.innerWidth;
     const h = window.innerHeight;
+    const pr = this.renderer.getPixelRatio();
     this.renderer.setSize(w, h, false);
+    this.composer.setPixelRatio(pr);
+    this.composer.setSize(w, h);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
   }
@@ -218,6 +336,7 @@ export class SimScene {
       const size = 320 + rnd() * 420;
       sprite.scale.set(size, size * 0.42, 1);
       sprite.position.set((rnd() - 0.5) * 5200, 330 + rnd() * 260, (rnd() - 0.5) * 5200);
+      sprite.userData.rank = i;   // lower-quality presets show fewer clouds
       this.clouds.push(sprite);
       this.scene.add(sprite);
     }
@@ -259,6 +378,7 @@ export class SimScene {
 
     const detail = canvasTexture(256, 256, (g, w, h) => speckle(g, w, h, 205, 70, 9000, 1.5), true);
     detail.repeat.set(TERRAIN_SIZE / 14, TERRAIN_SIZE / 14);
+    this.groundDetail = detail;
     const ground = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true, map: detail }));
     ground.receiveShadow = true;
     this.scene.add(ground);
@@ -449,7 +569,8 @@ export class SimScene {
       wood: () => lambert({ color: 0x7a5a3a }),
       white: () => lambert({ color: 0xf2f3f4 }),
       crane: () => lambert({ color: 0xf2b01e }),
-      metal: () => new THREE.MeshStandardMaterial({ color: 0xc4c9ce, metalness: 0.7, roughness: 0.45 }),
+      metal: () => new THREE.MeshStandardMaterial({ color: 0xc4c9ce, metalness: 0.8, roughness: 0.38, envMapIntensity: 1.1 }),
+      steelPbr: () => new THREE.MeshStandardMaterial({ color: 0x9aa0a6, metalness: 0.85, roughness: 0.5, envMapIntensity: 0.9 }),
       lamp: () => new THREE.MeshBasicMaterial({ color: 0xfff3c4 }),
       paint: () => lambert({ color }),
       plaster: () => lambert({ color }),
@@ -593,8 +714,13 @@ export class SimScene {
   #drone() {
     const root = new THREE.Group();
     root.rotation.order = 'YXZ';
-    const grey = new THREE.MeshStandardMaterial({ color: 0x8b8f94, roughness: 0.6 });
-    const dark = new THREE.MeshStandardMaterial({ color: 0x2b2d30, roughness: 0.5 });
+    // Light grey magnesium shell with a clear-coat sheen, dark composite parts.
+    const grey = new THREE.MeshPhysicalMaterial({
+      color: 0x9398a0, roughness: 0.42, metalness: 0.15,
+      clearcoat: 0.7, clearcoatRoughness: 0.35, envMapIntensity: 1.0,
+    });
+    const dark = new THREE.MeshStandardMaterial({ color: 0x25272b, roughness: 0.38, metalness: 0.25, envMapIntensity: 0.8 });
+    const glass = new THREE.MeshPhysicalMaterial({ color: 0x0a0c10, roughness: 0.08, metalness: 0.1, clearcoat: 1, envMapIntensity: 1.4 });
     const add = (geo, mat, x, y, z) => {
       const mesh = new THREE.Mesh(geo, mat);
       mesh.position.set(x, y, z);
@@ -604,7 +730,19 @@ export class SimScene {
     };
     add(new THREE.BoxGeometry(0.085, 0.05, 0.18), grey, 0, 0.015, 0);
     add(new THREE.BoxGeometry(0.06, 0.02, 0.1), dark, 0, 0.045, 0.02);       // battery
-    add(new THREE.SphereGeometry(0.024, 12, 8), dark, 0, -0.005, -0.1);      // gimbal camera
+    add(new THREE.SphereGeometry(0.03, 16, 12), dark, 0, -0.004, -0.09);     // gimbal housing
+    add(new THREE.SphereGeometry(0.02, 16, 12), glass, 0, -0.006, -0.108);   // lens
+    // Soft blurred discs stand in for the spinning blades (motion blur).
+    const discTex = canvasTexture(128, 128, (g) => {
+      for (let i = 0; i < 90; i++) {
+        const a = (i / 90) * Math.PI * 2;
+        g.strokeStyle = `rgba(30,30,34,${0.03 + 0.03 * Math.random()})`;
+        g.lineWidth = 2 + Math.random() * 3;
+        g.beginPath();
+        g.arc(64, 64, 20 + Math.random() * 40, a, a + 0.5 + Math.random());
+        g.stroke();
+      }
+    });
     this.props = [];
     for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
       const mx = sx * 0.125;
@@ -616,8 +754,8 @@ export class SimScene {
       const prop = add(new THREE.BoxGeometry(0.18, 0.003, 0.016), dark, mx, 0.05, mz);
       prop.castShadow = false;
       const disc = new THREE.Mesh(
-        new THREE.CircleGeometry(0.09, 20).rotateX(-Math.PI / 2),
-        new THREE.MeshBasicMaterial({ color: 0x222222, transparent: true, opacity: 0.25, depthWrite: false }),
+        new THREE.CircleGeometry(0.1, 24).rotateX(-Math.PI / 2),
+        new THREE.MeshBasicMaterial({ map: discTex, color: 0x33363c, transparent: true, opacity: 0, depthWrite: false }),
       );
       disc.position.set(mx, 0.051, mz);
       root.add(disc);
@@ -673,10 +811,13 @@ export class SimScene {
     model.visible = this.view !== 'gimbal';
 
     const spin = drone.motorsOn ? 40 + drone.throttleLevel * 90 : 0;
+    const blur = THREE.MathUtils.clamp((spin - 25) / 55, 0, 1);
     for (const p of this.props) {
       p.prop.rotation.y += p.dir * spin * dt;
-      p.disc.visible = spin > 0;
-      p.prop.visible = spin === 0 || Math.floor(time * 30) % 2 === 0;
+      p.prop.visible = blur < 1;              // solid blades give way to the blurred disc
+      p.disc.visible = blur > 0;
+      p.disc.rotation.y += p.dir * dt * 6;
+      p.disc.material.opacity = 0.5 * blur;
     }
 
     for (const r of this.rotors) r.rotor.rotation.z = turbineAngle(r.turbine, time);
@@ -698,7 +839,8 @@ export class SimScene {
       cam.position.set(drone.pos.x + fx * 0.1, drone.pos.y, drone.pos.z + fz * 0.1);
       cam.rotation.set(drone.gimbal, -drone.heading, 0);
     } else if (this.view === 'chase') {
-      fov = 65;
+      // A little FOV stretch with speed to sell the sense of motion.
+      fov = this.chaseFov + Math.min(drone.groundSpeed, 20) * 0.35;
       const target = new THREE.Vector3(drone.pos.x - fx * 1.5, drone.pos.y + 0.5, drone.pos.z - fz * 1.5);
       const floor = this.terrain.groundHeight(target.x, target.z) + 0.25;
       target.y = Math.max(target.y, floor);
@@ -719,6 +861,8 @@ export class SimScene {
     this.sky.position.copy(cam.position);
     this.sun.position.set(drone.pos.x, drone.pos.y, drone.pos.z).addScaledVector(SUN_DIR, 160);
     this.sun.target.position.set(drone.pos.x, drone.pos.y, drone.pos.z);
-    this.renderer.render(this.scene, cam);
+
+    if (this.settings.post) this.composer.render(dt);
+    else this.renderer.render(this.scene, cam);
   }
 }
