@@ -172,6 +172,23 @@ $('btn-start').onclick = () => {
   setPaused(false);
 };
 
+// ---------- Graphics quality ----------
+
+$('opt-quality').value = sim.quality;
+$('opt-quality').onchange = (e) => sim.setQuality(e.target.value);
+
+const fpsEl = $('fps');
+let fpsFrames = 0;
+let fpsSince = performance.now();
+function trackFps(now) {
+  fpsFrames++;
+  if (now - fpsSince < 500) return;
+  const fps = Math.round(fpsFrames * 1000 / (now - fpsSince));
+  fpsFrames = 0;
+  fpsSince = now;
+  if (game.paused) fpsEl.textContent = `${fps} fps`;
+}
+
 input.bindTouchStick($('touch-left'), ['yaw', 'throttle']);
 input.bindTouchStick($('touch-right'), ['roll', 'pitch']);
 
@@ -355,6 +372,7 @@ let carry = 0;
 function frame(now) {
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
+  trackFps(now);
   const v = input.update(dt);
 
   if (!game.paused) {

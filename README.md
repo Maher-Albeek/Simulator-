@@ -64,6 +64,26 @@ on-screen sticks on a touch screen.
   including the wires.
 - Missions: free flight, an 8-gate timed course, and precision landing.
 
+## Graphics
+
+The renderer is a linear-light pipeline built on the vendored three.js core,
+with no external assets: every texture is drawn procedurally at load time.
+
+- Image-based lighting: the sky is pre-filtered into an environment map, so
+  metal, glass and the drone's shell reflect it.
+- Post-processing (`src/gfx/postfx.js`): depth-based ambient occlusion,
+  aerial-perspective fog that matches the sky, bloom, ACES tone mapping,
+  colour grading, vignette, and FXAA or MSAA depending on the preset.
+- Ground cover (`src/gfx/scatter.js`): grass and tussocks placed entirely in
+  the vertex shader from a baked terrain heightmap, anchored to world cells so
+  nothing swims as you fly, and animated by the same wind that sways the trees.
+- Soft sun shadows that follow the drone, layered clouds and hazy ridges.
+
+Quality presets (Low, Medium, High, Ultra) are in the menu under *Graphics*
+and are remembered between sessions. They change resolution, shadows,
+vegetation density and post-processing only: the flight model, controls and
+collisions are identical on every setting.
+
 ## Development
 
 ```
@@ -72,4 +92,6 @@ npm test
 
 `src/duml.js` (controller protocol), `src/drone.js` (flight model) and
 `src/terrain.js` (world shape and obstacles) have no browser dependencies and are covered
-by the tests. three.js is vendored in `vendor/` (MIT licence).
+by the tests. Rendering lives in `src/scene.js` and `src/gfx/`, and reads the
+flight state without ever writing to it. three.js is vendored in `vendor/`
+(MIT licence).
